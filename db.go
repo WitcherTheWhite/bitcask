@@ -56,6 +56,42 @@ func Open(options Options) (*DB, error) {
 	return db, nil
 }
 
+// Close 关闭数据库
+func (db *DB) Close() error {
+	if db.activeFile == nil {
+		return nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// 关闭当前活跃文件
+	if err := db.activeFile.Close(); err != nil {
+		return err
+	}
+
+	// 关闭旧的活跃文件
+	for _, file := range db.olderFiles {
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Sync 持久化数据文件
+func (db *DB) Sync() error {
+	if db.activeFile == nil {
+		return nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	db.activeFile.Sync()
+
+	return nil
+}
+
 // Put 写入 Key/Value 数据，Key 不能为空
 func (db *DB) Put(key []byte, value []byte) error {
 	// 判断 key 是否有效
@@ -157,6 +193,38 @@ func (db *DB) Delete(key []byte) error {
 	return nil
 }
 
+// ListKeys 获取所有的 key
+func (db *DB) ListKeys() [][]byte {
+	iter := db.index.Iterator(false)
+	keys := make([][]byte, db.index.Size())
+	var i int
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		keys[i] = iter.Key()
+		i++
+	}
+
+	return keys
+}
+
+// Fold 获取所有的数据，并执行用户指定的操作，函数返回 false 时终止遍历
+func (db *DB) Fold(fn func(key []byte, value []byte) bool) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	iter := db.index.Iterator(false)
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		value, err := db.Get(iter.Key())
+		if err != nil {
+			return err
+		}
+		if !fn(iter.Key(), value) {
+			break
+		}
+	}
+
+	return nil
+}
+
 // 追加写数据到活跃文件中
 func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, error) {
 	db.mu.Lock()
@@ -188,7 +256,7 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 		}
 	}
 
-	writeoff := db.activeFile.WriteOff
+	writeOff := db.activeFile.WriteOff
 	if err := db.activeFile.Write(encRecord); err != nil {
 		return nil, err
 	}
@@ -203,7 +271,7 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 	// 构建内存索引信息
 	pos := &data.LogRecordPos{
 		Fid:    db.activeFile.FileId,
-		Offset: writeoff,
+		Offset: writeOff,
 	}
 
 	return pos, nil
