@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,8 +20,9 @@ type DB struct {
 	fileIds    []int                     // 文件id，只能在加载索引时使用
 	activeFile *data.DataFile            // 当前活跃数据文件，可以用于写入
 	olderFiles map[uint32]*data.DataFile // 旧的数据文件，只能用于读
-	index      index.Indexer
-	seqNo      uint64 // 事务序列号，全局递增
+	index      index.Indexer             // 内存索引
+	seqNo      uint64                    // 事务序列号，全局递增
+	isMerging  bool                      // 是否正在 merge
 }
 
 // Open 打开 bitcask 存储引擎实例
@@ -45,9 +47,17 @@ func Open(options Options) (*DB, error) {
 		index:      index.NewIndexer(options.IndexType),
 	}
 
+	// 加载 merge 数据目录
+	if err := db.loadMergeFile(); err != nil {
+		return nil, err
+	}
+
+	// 加载数据文件
 	if err := db.loadDataFiles(); err != nil {
 		return nil, err
 	}
+
+	// 从 hint 索引文件中加载索引
 
 	// 从数据文件中加载索引
 	if err := db.loadIndexFromDataFiles(); err != nil {
@@ -88,7 +98,10 @@ func (db *DB) Sync() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	db.activeFile.Sync()
+	err := db.activeFile.Sync()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -392,6 +405,18 @@ func (db *DB) loadIndexFromDataFiles() error {
 		return nil
 	}
 
+	// 查看是否发生过 merge
+	hasMerge, nonMergeFileId := false, uint32(0)
+	mergeFinFileName := filepath.Join(db.options.DirPath, data.MergeFinishedFileName)
+	if _, err := os.Stat(mergeFinFileName); err == nil {
+		fid, err := db.getNonMergeFileId(mergeFinFileName)
+		if err != nil {
+			return err
+		}
+		hasMerge = true
+		nonMergeFileId = fid
+	}
+
 	updateIndex := func(key []byte, typ data.LogRecordType, pos *data.LogRecordPos) {
 		var ok bool
 		if typ == data.LogRecordDeleted {
@@ -411,6 +436,10 @@ func (db *DB) loadIndexFromDataFiles() error {
 	// 遍历所有文件id，处理文件中的记录
 	for _, fid := range db.fileIds {
 		var fileId = uint32(fid)
+		// 如果 fileId < nonMergeFileId，说明从 hint 文件加载了索引，跳过
+		if hasMerge && fileId < nonMergeFileId {
+			continue
+		}
 		var dataFile *data.DataFile
 		if fileId == db.activeFile.FileId {
 			dataFile = db.activeFile
