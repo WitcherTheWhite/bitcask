@@ -28,7 +28,7 @@ type DataFile struct {
 
 // OpenDataFile 打开数据文件
 func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
-	fileName := GetDadaFileName(dirPath, fileId)
+	fileName := GetDataFileName(dirPath, fileId)
 	return newDataFile(fileName, fileId)
 }
 
@@ -44,8 +44,8 @@ func OpenMergeFinishedFile(dirPath string) (*DataFile, error) {
 	return newDataFile(fileName, 0)
 }
 
-// GetDadaFileName 得到数据文件的文件名
-func GetDadaFileName(dirPath string, fileId uint32) string {
+// GetDataFileName 得到数据文件的文件名
+func GetDataFileName(dirPath string, fileId uint32) string {
 	return filepath.Join(dirPath, fmt.Sprintf("%09d", fileId)+DataFileNameSuffix)
 }
 
