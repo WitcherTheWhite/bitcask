@@ -46,7 +46,6 @@ func Open(options Options) (*DB, error) {
 		olderFiles: make(map[uint32]*data.DataFile),
 		index:      index.NewIndexer(options.IndexType),
 	}
-
 	// 加载 merge 数据目录
 	if err := db.loadMergeFile(); err != nil {
 		return nil, err

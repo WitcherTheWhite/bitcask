@@ -156,7 +156,7 @@ func (db *DB) loadMergeFile() error {
 	mergePath := db.getMergePath()
 	// 如果目录不存在，直接返回
 	if _, err := os.Stat(mergePath); os.IsNotExist(err) {
-		return err
+		return nil
 	}
 	defer func() {
 		_ = os.RemoveAll(mergePath)
